@@ -66,6 +66,26 @@ onprem-lb validate -c examples/config.yaml
 onprem-lb serve -c examples/config.yaml --workers auto
 ```
 
+### GitHub Action
+
+Validate the config on every PR, or run a real load balancer in CI:
+
+```yaml
+- uses: ChadiDridi/onprem-lb@v0.1.1
+  with:
+    config: lb/config.yaml          # validate only (default)
+
+- uses: ChadiDridi/onprem-lb@v0.1.1
+  id: lb
+  with:
+    config: tests/lb.yaml
+    mode: serve                     # stays running for the following steps
+    workers: "2"
+- run: curl localhost:8080 && curl "${{ steps.lb.outputs.admin-url }}/state"
+```
+
+Outputs in serve mode: `admin-url`, `pid`, `log`.
+
 ## Configuration
 
 A complete annotated example is in [`examples/config.yaml`](examples/config.yaml). The shape:

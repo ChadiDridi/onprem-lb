@@ -1,0 +1,97 @@
+name: onprem-lb
+description: Validate onprem-lb load balancer configs on every PR, or run a real L4/L7 load balancer in front of your services during CI.
+author: Chadi Dridi
+branding:
+  icon: shuffle
+  color: green
+inputs:
+  config:
+    description: Path to the onprem-lb YAML config.
+    required: true
+  mode:
+    description: "validate (check the config and exit) or serve (validate, then run the load balancer in the background for later steps)."
+    required: false
+    default: validate
+  workers:
+    description: Worker processes in serve mode (number or 'auto').
+    required: false
+    default: "1"
+  admin-token:
+    description: Bearer token for the admin API in serve mode (required if admin.listen is not loopback).
+    required: false
+    default: ""
+  wait-timeout:
+    description: Seconds to wait for the admin API to answer in serve mode.
+    required: false
+    default: "30"
+outputs:
+  admin-url:
+    description: Admin API base URL (serve mode).
+    value: ${{ steps.serve.outputs.admin-url }}
+  pid:
+    description: Process id of the running load balancer (serve mode).
+    value: ${{ steps.serve.outputs.pid }}
+  log:
+    description: Path of the load balancer log file (serve mode).
+    value: ${{ steps.serve.outputs.log }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for onprem-lb
+      id: py
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        update-environment: false  # don't change the caller's Python
+    - name: Install onprem-lb
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        PY: ${{ steps.py.outputs.python-path }}
+      run: |
+        case "$MODE" in validate|serve) ;; *) echo "::error::mode must be validate or serve, got '$MODE'"; exit 1 ;; esac
+        "$PY" -m venv "$RUNNER_TEMP/onprem-lb-venv"
+        "$RUNNER_TEMP/onprem-lb-venv/bin/pip" install --quiet --disable-pip-version-check "${GITHUB_ACTION_PATH}[fast]"
+        "$RUNNER_TEMP/onprem-lb-venv/bin/onprem-lb" version
+    - name: Validate config
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+      run: |
+        if ! out=$("$RUNNER_TEMP/onprem-lb-venv/bin/onprem-lb" validate -c "$CONFIG" 2>&1); then
+          echo "::error file=$CONFIG::$out"
+          exit 1
+        fi
+        echo "$out"
+    - name: Start load balancer
+      id: serve
+      if: inputs.mode == 'serve'
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        WORKERS: ${{ inputs.workers }}
+        ONPREM_LB_ADMIN_TOKEN: ${{ inputs.admin-token }}
+        WAIT: ${{ inputs.wait-timeout }}
+      run: |
+        venv="$RUNNER_TEMP/onprem-lb-venv"
+        log="$RUNNER_TEMP/onprem-lb.log"
+        nohup "$venv/bin/onprem-lb" serve -c "$CONFIG" --workers "$WORKERS" > "$log" 2>&1 &
+        pid=$!
+        admin=$("$venv/bin/python" -c 'import sys, yaml
+        a = ((yaml.safe_load(open(sys.argv[1])) or {}).get("admin") or {}).get("listen", "127.0.0.1:9900")
+        host, _, port = a.rpartition(":")
+        print(("127.0.0.1" if host in ("0.0.0.0", "::", "[::]") else host) + ":" + port)' "$CONFIG")
+        for _ in $(seq "$WAIT"); do
+          if curl -sf "http://$admin/healthz" >/dev/null; then
+            echo "admin-url=http://$admin" >> "$GITHUB_OUTPUT"
+            echo "pid=$pid" >> "$GITHUB_OUTPUT"
+            echo "log=$log" >> "$GITHUB_OUTPUT"
+            echo "onprem-lb running (pid $pid), admin API http://$admin"
+            exit 0
+          fi
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 1
+        done
+        echo "::error::onprem-lb did not start"
+        cat "$log"
+        exit 1

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- GitHub Action (`uses: ChadiDridi/onprem-lb@v0.1.1`), with two modes:
+  - `mode: validate` lints load balancer configs in PRs.
+  - `mode: serve` runs a real onprem-lb in CI so integration tests go through an actual L4/L7 load balancer.
+
 ## 0.1.0
 
 First release.
