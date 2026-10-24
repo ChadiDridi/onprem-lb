@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "onprem-lb"
+dynamic = ["version"]
+description = "On-demand, API-driven on-prem load balancer: L4 (TCP/UDP/TLS) and L7 (HTTP/HTTPS) with a dozen balancing algorithms."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "Chadi Dridi" }]
+keywords = ["load balancer", "reverse proxy", "nlb", "alb", "on-prem", "asyncio", "maglev", "consistent hashing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: No Input/Output (Daemon)",
+  "Framework :: AsyncIO",
+  "Intended Audience :: System Administrators",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Internet :: Proxy Servers",
+  "Topic :: System :: Networking",
+]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+fast = ["uvloop>=0.19; sys_platform != 'win32'"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+onprem-lb = "onprem_lb.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ChadiDridi/onprem-lb"
+Issues = "https://github.com/ChadiDridi/onprem-lb/issues"
+
+[tool.hatch.version]
+path = "src/onprem_lb/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/onprem_lb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 150
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+ignore = ["E731", "B905", "UP031"]

@@ -1,0 +1,23 @@
+# docker compose -f examples/compose/docker-compose.yaml up --build
+#   curl localhost:8080          (ALB, round robin across whoami-1/2)
+#   curl localhost:9000          (NLB, TCP passthrough)
+#   curl -H "Authorization: Bearer demo-token" localhost:9900/state
+services:
+  lb:
+    build: ../..
+    image: ghcr.io/chadidridi/onprem-lb:latest
+    environment:
+      ONPREM_LB_ADMIN_TOKEN: demo-token   # change this
+    volumes:
+      - ./config.yaml:/etc/onprem-lb/config.yaml:ro
+    ports:  # host ports overridable: LB_HTTP_PORT=18080 docker compose up
+      - "${LB_HTTP_PORT:-8080}:8080"
+      - "${LB_TCP_PORT:-9000}:9000"
+      - "${LB_ADMIN_PORT:-9900}:9900"
+    depends_on: [whoami-1, whoami-2]
+  whoami-1:
+    image: traefik/whoami:v1.10.3
+    command: ["--name", "whoami-1"]
+  whoami-2:
+    image: traefik/whoami:v1.10.3
+    command: ["--name", "whoami-2"]

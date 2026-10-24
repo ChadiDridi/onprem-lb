@@ -1,0 +1,89 @@
+# Full example: one application LB (HTTP + HTTPS) and one network LB (TCP, UDP, TLS).
+admin:
+  listen: 0.0.0.0:9900          # needs ONPREM_LB_ADMIN_TOKEN when not on loopback
+  token_env: ONPREM_LB_ADMIN_TOKEN
+
+target_groups:
+  web:
+    protocol: http
+    algorithm: least_connections
+    targets:
+      - address: 10.0.0.11:8080
+      - address: 10.0.0.12:8080
+        weight: 2
+    health_check: {protocol: http, path: /healthz, interval: 5, timeout: 2, healthy_threshold: 2, unhealthy_threshold: 3, matcher: "200-399"}
+    stickiness: {enabled: true, cookie: lb_web, duration: 3600}
+    deregistration_delay: 30
+
+  api-v1:
+    protocol: http
+    algorithm: power_of_two
+    targets: [10.0.1.11:9000, 10.0.1.12:9000]
+    health_check: {path: /health}
+  api-v2:
+    protocol: http
+    algorithm: least_response_time
+    targets: [10.0.1.21:9000]
+    health_check: {path: /health}
+
+  cache:
+    protocol: http
+    algorithm: consistent_hash
+    hash_key: uri                # same URL -> same cache node
+    targets: [10.0.2.11:6081, 10.0.2.12:6081, 10.0.2.13:6081]
+
+  postgres:
+    protocol: tcp
+    algorithm: least_connections
+    proxy_protocol: v2           # targets see the real client IP
+    targets: [10.0.3.11:5432, 10.0.3.12:5432]
+    health_check: {protocol: tcp, interval: 3}
+    deregistration_delay: 300
+
+  dns:
+    protocol: udp
+    algorithm: maglev
+    hash_key: source_ip
+    targets: [10.0.4.11:53, 10.0.4.12:53]
+    health_check: {protocol: tcp, port: 53}   # UDP targets need a TCP/HTTP check port
+
+load_balancers:
+  public:
+    type: application
+    listeners:
+      - port: 80
+        protocol: http
+        default_action:
+          redirect: {status: 301, location: "https://{host}{path}?{query}"}
+      - port: 443
+        protocol: https
+        certificates:
+          - {cert: /etc/onprem-lb/tls/example.crt, key: /etc/onprem-lb/tls/example.key, server_names: ["example.com", "*.example.com"]}
+          - {cert: /etc/onprem-lb/tls/other.crt, key: /etc/onprem-lb/tls/other.key, server_names: ["other.org"]}
+        timeouts: {connect: 3, idle: 60, response: 30, client_header: 10}
+        default_action: {forward: web}
+        rules:
+          - priority: 10
+            conditions: {host: ["api.example.com"], path: ["/v1/*", "/v2/*"], header: {X-Canary: ["true"]}}
+            action: {forward: api-v2}
+          - priority: 20
+            conditions: {host: ["api.example.com"]}
+            action:
+              forward:                      # weighted canary: 90/10
+                - {target_group: api-v1, weight: 90}
+                - {target_group: api-v2, weight: 10}
+          - priority: 30
+            conditions: {path: ["/static/*", "*.png", "*.css"]}
+            action: {forward: cache}
+          - priority: 40
+            conditions: {path: ["/admin/*"], source_ip: ["10.0.0.0/8"]}
+            action: {forward: web}
+          - priority: 50
+            conditions: {path: ["/admin/*"]}
+            action: {fixed_response: {status: 403, body: "forbidden\n"}}
+
+  internal:
+    type: network
+    listeners:
+      - {port: 5432, protocol: tcp, default_action: {forward: postgres}, timeouts: {idle: 3600}}
+      - {port: 53, protocol: udp, default_action: {forward: dns}, timeouts: {idle: 30}}

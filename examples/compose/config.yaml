@@ -1,0 +1,27 @@
+admin:
+  listen: 0.0.0.0:9900
+target_groups:
+  whoami:
+    protocol: http
+    algorithm: round_robin
+    targets: [whoami-1:80, whoami-2:80]
+    health_check: {path: /health, interval: 2}
+  whoami-tcp:
+    protocol: tcp
+    algorithm: least_connections
+    targets: [whoami-1:80, whoami-2:80]
+load_balancers:
+  web:
+    type: application
+    listeners:
+      - port: 8080
+        protocol: http
+        default_action: {forward: whoami}
+        rules:
+          - priority: 1
+            conditions: {path: ["/maintenance"]}
+            action: {fixed_response: {status: 503, body: "back soon\n"}}
+  tcp:
+    type: network
+    listeners:
+      - {port: 9000, protocol: tcp, default_action: {forward: whoami-tcp}}
